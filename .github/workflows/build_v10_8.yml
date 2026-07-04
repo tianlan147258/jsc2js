@@ -45,7 +45,7 @@ jobs:
       - name: Generate build config
         run: |
           cd v8
-          python tools/dev/v8gen.py x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
+          python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
         shell: bash
 
       - name: Build d8
