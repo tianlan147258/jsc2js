@@ -42,10 +42,19 @@ jobs:
           python3 patch_v10_8.py
         shell: bash
 
-      - name: Generate build config
+      - name: Patch vs_toolchain.py for VS detection
         run: |
+          cd v8
           $env:VSPATH = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Write-Host "VS: $env:VSPATH"
+          $code = Get-Content build/vs_toolchain.py -Raw
+          $code = $code.Replace('def DetectVisualStudioPath():', "def DetectVisualStudioPath():`n  return r`"$env:VSPATH`"")
+          Set-Content build/vs_toolchain.py -Value $code
+          Write-Host "Patched vs_toolchain.py"
+        shell: pwsh
+
+      - name: Generate build config
+        run: |
           cd v8
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false use_lld=false
         shell: pwsh
