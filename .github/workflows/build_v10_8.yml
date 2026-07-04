@@ -42,13 +42,11 @@ jobs:
           python3 patch_v10_8.py
         shell: bash
 
-      - name: Patch vs_toolchain.py and generate build config
+      - name: Generate build config
         run: |
+          $env:VSPATH = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VS: $env:VSPATH"
           cd v8
-          $vspath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VS: $vspath"
-          $env:VSPATH = $vspath
-          python -c "import os; c=open('build/vs_toolchain.py').read(); open('build/vs_toolchain.py','w').write(c.replace('def DetectVisualStudioPath():','def DetectVisualStudioPath():\n  return r\"' + os.environ['VSPATH'] + '\"'))"
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false use_lld=false
         shell: pwsh
 
