@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Apply jsc2js patches to V8 10.8.168.25 source directly."""
 
-import os, sys, re
+import os, sys
 
 V8_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "v8") if "v8" not in os.getcwd() else "."
 
@@ -31,7 +31,7 @@ def patch_code_serializer():
             if marker_without in line:
                 in_sanity_without = True
                 brace_count = 0
-                new_lines.append(line)  # signature
+                new_lines.append(line)
                 i += 1
                 while i < len(lines) and in_sanity_without:
                     l = lines[i]
@@ -101,21 +101,31 @@ def patch_d8_cc():
     content = read_file(path)
     lines = content.split('\n')
 
-    # --- Step A: Add includes at top of file (after last #include) ---
-    include_code = [
+    # --- Step A: Add includes after the last src/ include ---
+    # Find last line that includes a "src/" header (internal V8 headers)
+    last_src_include = -1
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('#include "src/'):
+            last_src_include = i
+    
+    if last_src_include < 0:
+        # Fallback: find any #include
+        for i, line in enumerate(lines):
+            if line.strip().startswith('#include'):
+                last_src_include = i
+    
+    new_includes = [
         '#include "src/snapshot/code-serializer.h"',
         '#include "src/objects/objects-inl.h"',
+        '#include <unordered_set>',
     ]
-    last_include_idx = -1
-    for i, line in enumerate(lines):
-        if line.strip().startswith('#include'):
-            last_include_idx = i
-    if last_include_idx >= 0:
-        for inc in reversed(include_code):
-            lines.insert(last_include_idx + 1, inc)
+    for inc in reversed(new_includes):
+        lines.insert(last_src_include + 1, inc)
     
     # --- Step B: Insert Disassemble + LoadJSC after RealmSharedSet ---
     new_functions = [
+        '',
         '// ===== jsc2js patch: Disassemble and LoadJSC =====',
         'static void DisassembleBytecode(v8::internal::Isolate* isolate,',
         '                                v8::internal::Handle<v8::internal::BytecodeArray> bytecode,',
@@ -188,13 +198,11 @@ def patch_d8_cc():
     insert_idx = -1
     for i, line in enumerate(lines):
         if 'void Shell::RealmSharedSet(' in line:
-            # Find closing brace
             j = i + 1
-            brace_count = 1  # Assume signature line already has {
+            brace_count = 1
             while j < len(lines) and brace_count > 0:
                 brace_count += lines[j].count('{') - lines[j].count('}')
                 j += 1
-            # j is now after closing brace. Insert after the blank line(s) that follow.
             insert_idx = j
             while insert_idx < len(lines) and lines[insert_idx].strip() == '':
                 insert_idx += 1
