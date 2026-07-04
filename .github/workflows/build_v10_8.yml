@@ -1,0 +1,77 @@
+name: Build V8 10.8 d8
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    name: Build V8 10.8.168.25 d8 (Windows)
+    runs-on: windows-latest
+    env:
+      DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
+      GYP_MSVS_VERSION: "2022"
+    steps:
+      - name: Checkout infra
+        uses: actions/checkout@v4
+
+      - name: Setup Git
+        run: git config --global core.autocrlf false
+
+      - name: Install depot_tools
+        run: |
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo "$PWD/depot_tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "PYTHONUTF8=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PYTHONIOENCODING=UTF-8" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+
+      - name: Sync V8 source
+        run: |
+          gclient config --name v8 --unmanaged https://github.com/v8/v8.git
+          gclient sync --nohooks -D --no-history --revision v8@10.8.168.25
+          gclient runhooks
+        shell: bash
+
+      - name: Copy patch files
+        run: |
+          cp apply_patch.py v8/
+          cp patch_old_v2.diff v8/
+        shell: bash
+
+      - name: Apply patch
+        run: |
+          cd v8
+          python apply_patch.py patch_old_v2.diff
+        shell: bash
+
+      - name: Generate build config
+        run: |
+          cd v8
+          python tools/dev/v8gen.py x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" v8_enable_disassembler=true v8_enable_object_print=true treat_warnings_as_errors=false v8_enable_pointer_compression=false v8_enable_31bit_smis_on_64bit_arch=false v8_enable_i18n_support=true v8_enable_webassembly=true
+        shell: bash
+
+      - name: Build d8
+        run: |
+          cd v8
+          ninja -C out.gn/x64.release d8
+        shell: bash
+
+      - name: Prepare artifact
+        run: |
+          mkdir artifacts
+          cp v8/out.gn/x64.release/d8.exe artifacts/
+          cp v8/out.gn/x64.release/snapshot_blob.bin artifacts/
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: d8-v10.8.168.25-Windows
+          path: |
+            artifacts/d8.exe
+            artifacts/snapshot_blob.bin
+          retention-days: 7
