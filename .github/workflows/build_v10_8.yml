@@ -32,16 +32,15 @@ jobs:
       - name: Sync V8 source
         run: |
           gclient config --name v8 --unmanaged https://github.com/v8/v8.git
-          gclient sync --nohooks -D --with_branch_heads --with_tags --revision v8@10.8.168.25
+          gclient sync --nohooks -D --no-history --revision v8@10.8.168.25
           gclient runhooks
         shell: bash
 
-      - name: Copy and Apply patch
+      - name: Apply V8 10.8 patches
         run: |
-          cp apply_patch.py v8/
-          cp patch_old_v2.diff v8/
+          cp patch_v10_8.py v8/
           cd v8
-          python3 apply_patch.py --patch patch_old_v2.diff --verbose --second-try-ignore-whitespace --report apply_patch_report.txt --expect-token disassemble_bytecode --expect-file src/d8/d8.cc
+          python3 patch_v10_8.py
         shell: bash
 
       - name: Generate build config
