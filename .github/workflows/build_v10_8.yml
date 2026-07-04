@@ -45,10 +45,11 @@ jobs:
       - name: Patch vs_toolchain.py for VS detection
         run: |
           cd v8
-          $env:VSPATH = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VS: $env:VSPATH"
+          $vspath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VS: $vspath"
           $code = Get-Content build/vs_toolchain.py -Raw
-          $code = $code.Replace('def DetectVisualStudioPath():', "def DetectVisualStudioPath():`n  return r`"$env:VSPATH`"")
+          $code = $code.Replace('def DetectVisualStudioPath():', "def DetectVisualStudioPath():`n  return r`"$vspath`"")
+          $code = $code.Replace('def GetVisualStudioVersion():', "def GetVisualStudioVersion():`n  return `"2022`"")
           Set-Content build/vs_toolchain.py -Value $code
           Write-Host "Patched vs_toolchain.py"
         shell: pwsh
