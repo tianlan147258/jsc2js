@@ -54,6 +54,28 @@ jobs:
           python3 patch_v10_8.py
         shell: bash
 
+      - name: Debug - inspect gn files
+        run: |
+          cd v8
+          echo "=== .gn ==="
+          cat .gn
+          echo ""
+          echo "=== //build/config/BUILDCONFIG.gn first 30 lines ==="
+          head -30 build/config/BUILDCONFIG.gn
+          echo ""
+          echo "=== Line 11 of //build/config/BUILDCONFIG.gn ==="
+          sed -n '9,13p' build/config/BUILDCONFIG.gn
+          echo ""
+          echo "=== //build_overrides/build.gni ==="
+          cat build_overrides/build.gni 2>/dev/null || echo "no build.gni"
+          echo ""
+          echo "=== v8/gni/v8.gni target_cpu default ==="
+          grep -n "target_cpu" gni/v8.gni | head -5
+          echo ""
+          echo "=== Checking for .gn target_cpu references ==="
+          grep -rn "target_cpu=" --include="*.gn" --include="*.gni" . | head -10
+        shell: bash
+
       - name: Generate build config
         run: |
           cd v8
