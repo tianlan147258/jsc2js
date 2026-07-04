@@ -36,16 +36,12 @@ jobs:
           gclient runhooks
         shell: bash
 
-      - name: Copy patch files
+      - name: Copy and Apply patch
         run: |
           cp apply_patch.py v8/
           cp patch_old_v2.diff v8/
-        shell: bash
-
-      - name: Apply patch
-        run: |
           cd v8
-          python apply_patch.py --patch patch_old_v2.diff
+          python3 apply_patch.py --patch patch_old_v2.diff --verbose --second-try-ignore-whitespace --report apply_patch_report.txt
         shell: bash
 
       - name: Generate build config
