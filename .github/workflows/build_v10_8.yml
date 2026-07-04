@@ -60,32 +60,6 @@ jobs:
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
         shell: bash
 
-      - name: Diagnose V8 10.8 APIs
-        run: |
-          cd v8
-          echo "=== CachedData in d8.cc ==="
-          grep -n "CachedData\|cached_data\|AlignedCachedData" src/d8/d8.cc | head -20
-          echo ""
-          echo "=== CodeSerializer header ==="
-          find . -name "code-serializer*" -type f
-          echo ""
-          echo "=== Serializer classes ==="
-          grep -rn "class CodeSerializer\|class.*Serializer" src/snapshot/ --include="*.h" | head -10
-          echo ""
-          echo "=== BytecodeArray Disassemble ==="
-          grep -rn "Disassemble" src/objects/bytecode-array* 2>/dev/null | head -10
-          grep -rn "Disassemble" src/interpreter/ --include="*.h" | head -10
-          echo ""
-          echo "=== d8.h Shell:: methods ==="
-          grep -n "class Shell\|static.*Load\|static.*Execute\|static.*Read" src/d8/d8.h | head -20
-          echo ""
-          echo "=== CachedData in include ==="
-          find include/ -name "*.h" -exec grep -l "CachedData" {} \; 2>/dev/null
-          echo ""
-          echo "=== ScriptCompiler::CachedData ==="
-          grep -rn "class.*CachedData" include/ 2>/dev/null | head -5
-        shell: bash
-
       - name: Build d8
         run: |
           cd v8
