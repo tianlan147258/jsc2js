@@ -60,16 +60,15 @@ jobs:
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
         shell: bash
 
-      - name: GN gen (explicit)
-        run: |
-          cd v8
-          buildtools/win/gn.exe gen out.gn/x64.release
-        shell: bash
-
       - name: Build d8
         run: |
           cd v8
-          ninja -C out.gn/x64.release d8
+          # Touch all .gn files to prevent ninja from regenerating
+          touch build.ninja
+          ninja -C out.gn/x64.release -j 4 d8 2>&1 || (
+            echo "First attempt failed, trying with regeneration..."
+            ninja -C out.gn/x64.release -j 4 d8
+          )
         shell: bash
 
       - name: Prepare artifact
