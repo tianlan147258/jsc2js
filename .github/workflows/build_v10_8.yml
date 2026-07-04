@@ -20,6 +20,19 @@ jobs:
       - name: Setup Git
         run: git config --global core.autocrlf false
 
+      - name: Check Windows SDK
+        run: |
+          Write-Host "Available SDK versions:"
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
+          # List available SDK versions in registry
+          Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue
+          Get-ChildItem "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue
+          
+          # Also check what vs_toolchain.py sees
+          Write-Host "`nCurrent env include: $env:include"
+          Write-Host "Current env lib: $env:lib"
+        shell: pwsh
+
       - name: Install depot_tools
         run: |
           git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
