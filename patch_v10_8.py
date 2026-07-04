@@ -19,62 +19,50 @@ def patch_code_serializer():
     path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
     content = read_file(path)
 
-    old_sanity = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
-    uint32_t expected_source_hash) const {
-  SerializedCodeSanityCheckResult result = SanityCheckWithoutSource();
-  if (result != SerializedCodeSanityCheckResult::kSuccess) return result;
-  return SanityCheckJustSource(expected_source_hash);
-}"""
-    new_sanity = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
-    uint32_t expected_source_hash) const {
-  return SerializedCodeSanityCheckResult::kSuccess;
-}"""
-    if old_sanity not in content:
-        print("ERROR: SanityCheck pattern not found in code-serializer.cc")
-        return False
-    content = content.replace(old_sanity, new_sanity)
-
-    old_without = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
-    const {
-  if (this->size_ < kHeaderSize) {
-    return SerializedCodeSanityCheckResult::kInvalidHeader;
-  }
-  uint32_t magic_number = GetMagicNumber();
-  if (magic_number != kMagicNumber) {
-    return SerializedCodeSanityCheckResult::kMagicNumberMismatch;
-  }
-  uint32_t version_hash = GetHeaderValue(kVersionHashOffset);
-  if (version_hash != Version::Hash()) {
-    return SerializedCodeSanityCheckResult::kVersionMismatch;
-  }
-  uint32_t flags_hash = GetHeaderValue(kFlagHashOffset);
-  if (flags_hash != FlagList::Hash()) {
-    return SerializedCodeSanityCheckResult::kFlagsMismatch;
-  }
-  uint32_t payload_length = GetHeaderValue(kPayloadLengthOffset);
-  uint32_t max_payload_length = this->size_ - kHeaderSize;
-  if (payload_length > max_payload_length) {
-    return SerializedCodeSanityCheckResult::kLengthMismatch;
-  }
-  if (v8_flags.verify_snapshot_checksum) {
-    uint32_t checksum = GetHeaderValue(kChecksumOffset);
-    if (Checksum(ChecksummedContent()) != checksum) {
-      return SerializedCodeSanityCheckResult::kChecksumMismatch;
-    }
-  }
-  return SerializedCodeSanityCheckResult::kSuccess;
-}"""
-    new_without = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
-    const {
-  return SerializedCodeSanityCheckResult::kSuccess;
-}"""
-    if old_without not in content:
-        print("ERROR: SanityCheckWithoutSource pattern not found")
-        return False
-    content = content.replace(old_without, new_without)
-
-    write_file(path, content)
-    print("OK: Patched code-serializer.cc")
+    # Find and replace SanityCheck + SanityCheckWithoutSource using line-based matching
+    lines = content.split('\n')
+    new_lines = []
+    in_sanity = False
+    in_sanity_without = False
+    brace_count = 0
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not in_sanity and 'SerializedCodeData::SanityCheck(' in line and 'SanityCheckWithoutSource()' not in line:
+            in_sanity = True
+            brace_count = 0
+            new_lines.append(line)  # Keep function signature
+            i += 1
+            while i < len(lines) and in_sanity:
+                l = lines[i]
+                brace_count += l.count('{') - l.count('}')
+                if brace_count <= 0 and '}' in l:
+                    # End of function
+                    indent = ' ' * (len(l) - len(l.lstrip()))
+                    new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
+                    new_lines.append(l)  # Closing brace
+                    in_sanity = False
+                i += 1
+        elif not in_sanity_without and 'SerializedCodeData::SanityCheckWithoutSource()' in line:
+            in_sanity_without = True
+            brace_count = 0
+            new_lines.append(line)  # Keep function signature
+            i += 1
+            while i < len(lines) and in_sanity_without:
+                l = lines[i]
+                brace_count += l.count('{') - l.count('}')
+                if brace_count <= 0 and '}' in l:
+                    indent = ' ' * (len(l) - len(l.lstrip()))
+                    new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
+                    new_lines.append(l)
+                    in_sanity_without = False
+                i += 1
+        else:
+            new_lines.append(line)
+            i += 1
+    
+    write_file(path, '\n'.join(new_lines))
+    print("OK: Patched code-serializer.cc (body replacement)")
     return True
 
 def patch_deserializer():
@@ -115,100 +103,117 @@ def patch_d8_cc():
     path = os.path.join(V8_DIR, "src", "d8", "d8.cc")
     content = read_file(path)
 
-    old_end = """void Shell::RealmSharedSet(Local<String> property, Local<Value> value,
-                            const PropertyCallbackInfo<void>& info) {
-  Isolate* isolate = info.GetIsolate();
-  PerIsolateData* data = PerIsolateData::Get(isolate);
-  data->realm_shared_.Reset(isolate, value);
-}
-
-// Realm.takeWebSnapshot"""
-    new_block = """void Shell::RealmSharedSet(Local<String> property, Local<Value> value,
-                            const PropertyCallbackInfo<void>& info) {
-  Isolate* isolate = info.GetIsolate();
-  PerIsolateData* data = PerIsolateData::Get(isolate);
-  data->realm_shared_.Reset(isolate, value);
-}
-
-#include "src/snapshot/code-serializer.h"
-#include "src/objects/objects-inl.h"
-#include <iostream>
-#include <unordered_set>
-
-static void DisassembleBytecode(v8::internal::Isolate* isolate,
-                                v8::internal::Tagged<v8::internal::BytecodeArray> bytecode,
-                                std::unordered_set<uintptr_t>& visited,
-                                int depth) {
-  if (depth > 100) { return; }
-  uintptr_t key = reinterpret_cast<uintptr_t>(bytecode.ptr());
-  if (visited.count(key)) { return; }
-  visited.insert(key);
-
-  auto consts = bytecode.constant_pool();
-  for (int i = 0; consts.valid() && i < consts.length(); i++) {
-    auto obj = consts.get(i);
-    if (v8::internal::IsSharedFunctionInfo(obj)) {
-      auto shared = v8::internal::Cast<v8::internal::SharedFunctionInfo>(obj);
-      if (shared.HasBytecodeArray()) {
-        DisassembleBytecode(isolate, shared.GetBytecodeArray(isolate), visited, depth + 1);
-      }
-    }
-  }
-}
-
-void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {
-  auto isolate = reinterpret_cast<v8::internal::Isolate*>(args.GetIsolate());
-  for (int i = 0; i < args.Length(); i++) {
-    v8::String::Utf8Value filename(args.GetIsolate(), args[i]);
-    if (*filename == NULL) {
-      args.GetIsolate()->ThrowException(v8::Exception::Error(
-          v8::String::NewFromUtf8(args.GetIsolate(), "Error loading file").ToLocalChecked()));
-      return;
-    }
-    int length = 0;
-    auto filedata = reinterpret_cast<uint8_t*>(ReadChars(*filename, &length));
-    if (filedata == NULL) {
-      args.GetIsolate()->ThrowException(v8::Exception::Error(
-          v8::String::NewFromUtf8(args.GetIsolate(), "Error reading file").ToLocalChecked()));
-      return;
-    }
-    v8::internal::AlignedCachedData cached_data(filedata, length);
-    auto source = isolate->factory()
-                      ->NewStringFromUtf8(base::CStrVector("source"))
-                      .ToHandleChecked();
-    v8::ScriptOriginOptions origin_options;
-    v8::internal::MaybeHandle<v8::internal::SharedFunctionInfo> maybe_fun =
-        v8::internal::CodeSerializer::Deserialize(isolate, &cached_data, source, origin_options);
-
-    v8::internal::Handle<v8::internal::SharedFunctionInfo> fun;
-    if (!maybe_fun.ToHandle(&fun)) {
-      args.GetIsolate()->ThrowException(v8::Exception::Error(
-          v8::String::NewFromUtf8(args.GetIsolate(), "Deserialize failed, possibly version mismatch or invalid .jsc file").ToLocalChecked()));
-      delete[] filedata;
-      return;
-    }
-
-    v8::internal::PrintF("---- Starting disassembly of %s ----\n", *filename);
-    fflush(stdout);
-
-    std::unordered_set<uintptr_t> visited;
-    DisassembleBytecode(isolate, fun->GetBytecodeArray(isolate), visited, 0);
-
-    v8::internal::PrintF("---- Finished disassembly of %s ----\n", *filename);
-    fflush(stdout);
-
-    delete[] filedata;
-  }
-}
-
-// Realm.takeWebSnapshot"""
-
-    if old_end not in content:
-        print("ERROR: RealmSharedSet end pattern not found in d8.cc")
-        return False
-    content = content.replace(old_end, new_block)
-
-    # Add loadjsc to CreateGlobalTemplate
+    # Use exact content from V8 10.8.168.25:
+    # Line 2160: void Shell::RealmSharedSet(Local<String> property, Local<Value> value,
+    # Line 2161:                            const PropertyCallbackInfo<void>& info) {
+    # Line 2162:   Isolate* isolate = info.GetIsolate();
+    # Line 2163:   PerIsolateData* data = PerIsolateData::Get(isolate);
+    # Line 2164:   data->realm_shared_.Reset(isolate, value);
+    # Line 2165: }
+    # Line 2166: (blank)
+    # Line 2167: // Realm.takeWebSnapshot(index, exports) takes a snapshot ...
+    
+    # Use line-based approach to find and replace
+    lines = content.split('\n')
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if 'void Shell::RealmSharedSet(' in line:
+            # Found RealmSharedSet. Collect the function block.
+            new_lines.append(line)  # line 1: function signature
+            i += 1
+            new_lines.append(lines[i])  # line 2: const PropertyCallbackInfo<void>& info) {
+            i += 1
+            # Skip function body until closing brace
+            brace_count = 1
+            while i < len(lines) and brace_count > 0:
+                l = lines[i]
+                brace_count += l.count('{') - l.count('}')
+                i += 1
+            # i is now after the closing brace line
+            
+            # Insert new code
+            new_lines.append('')
+            new_lines.append('#include "src/snapshot/code-serializer.h"')
+            new_lines.append('#include "src/objects/objects-inl.h"')
+            new_lines.append('#include <iostream>')
+            new_lines.append('#include <unordered_set>')
+            new_lines.append('')
+            new_lines.append('static void DisassembleBytecode(v8::internal::Isolate* isolate,')
+            new_lines.append('                                v8::internal::Tagged<v8::internal::BytecodeArray> bytecode,')
+            new_lines.append('                                std::unordered_set<uintptr_t>& visited,')
+            new_lines.append('                                int depth) {')
+            new_lines.append('  if (depth > 100) { return; }')
+            new_lines.append('  uintptr_t key = reinterpret_cast<uintptr_t>(bytecode.ptr());')
+            new_lines.append('  if (visited.count(key)) { return; }')
+            new_lines.append('  visited.insert(key);')
+            new_lines.append('  auto consts = bytecode.constant_pool();')
+            new_lines.append('  for (int i = 0; i < consts.length(); i++) {')
+            new_lines.append('    auto obj = consts.get(i);')
+            new_lines.append('    if (v8::internal::IsSharedFunctionInfo(obj)) {')
+            new_lines.append('      auto shared = v8::internal::Cast<v8::internal::SharedFunctionInfo>(obj);')
+            new_lines.append('      if (shared.HasBytecodeArray()) {')
+            new_lines.append('        DisassembleBytecode(isolate, shared.GetBytecodeArray(isolate), visited, depth + 1);')
+            new_lines.append('      }')
+            new_lines.append('    }')
+            new_lines.append('  }')
+            new_lines.append('}')
+            new_lines.append('')
+            new_lines.append('void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {')
+            new_lines.append('  auto isolate = reinterpret_cast<v8::internal::Isolate*>(args.GetIsolate());')
+            new_lines.append('  for (int i = 0; i < args.Length(); i++) {')
+            new_lines.append('    v8::String::Utf8Value filename(args.GetIsolate(), args[i]);')
+            new_lines.append('    if (*filename == NULL) {')
+            new_lines.append('      args.GetIsolate()->ThrowException(v8::Exception::Error(')
+            new_lines.append('          v8::String::NewFromUtf8(args.GetIsolate(), "Error loading file").ToLocalChecked()));')
+            new_lines.append('      return;')
+            new_lines.append('    }')
+            new_lines.append('    int length = 0;')
+            new_lines.append('    auto filedata = reinterpret_cast<uint8_t*>(ReadChars(*filename, &length));')
+            new_lines.append('    if (filedata == NULL) {')
+            new_lines.append('      args.GetIsolate()->ThrowException(v8::Exception::Error(')
+            new_lines.append('          v8::String::NewFromUtf8(args.GetIsolate(), "Error reading file").ToLocalChecked()));')
+            new_lines.append('      return;')
+            new_lines.append('    }')
+            new_lines.append('    v8::internal::AlignedCachedData cached_data(filedata, length);')
+            new_lines.append('    auto source = isolate->factory()')
+            new_lines.append('                      ->NewStringFromUtf8(base::CStrVector("source"))')
+            new_lines.append('                      .ToHandleChecked();')
+            new_lines.append('    v8::ScriptOriginOptions origin_options;')
+            new_lines.append('    v8::internal::MaybeHandle<v8::internal::SharedFunctionInfo> maybe_fun =')
+            new_lines.append('        v8::internal::CodeSerializer::Deserialize(isolate, &cached_data, source, origin_options);')
+            new_lines.append('')
+            new_lines.append('    v8::internal::Handle<v8::internal::SharedFunctionInfo> fun;')
+            new_lines.append('    if (!maybe_fun.ToHandle(&fun)) {')
+            new_lines.append('      args.GetIsolate()->ThrowException(v8::Exception::Error(')
+            new_lines.append('          v8::String::NewFromUtf8(args.GetIsolate(), "Deserialize failed, possibly version mismatch or invalid .jsc file").ToLocalChecked()));')
+            new_lines.append('      delete[] filedata;')
+            new_lines.append('      return;')
+            new_lines.append('    }')
+            new_lines.append('')
+            new_lines.append('    v8::internal::PrintF("---- Starting disassembly of %s ----\\n", *filename);')
+            new_lines.append('    fflush(stdout);')
+            new_lines.append('')
+            new_lines.append('    std::unordered_set<uintptr_t> visited;')
+            new_lines.append('    DisassembleBytecode(isolate, fun->GetBytecodeArray(isolate), visited, 0);')
+            new_lines.append('')
+            new_lines.append('    v8::internal::PrintF("---- Finished disassembly of %s ----\\n", *filename);')
+            new_lines.append('    fflush(stdout);')
+            new_lines.append('')
+            new_lines.append('    delete[] filedata;')
+            new_lines.append('  }')
+            new_lines.append('}')
+            new_lines.append('')
+            
+            # Continue with the next line (should be the blank or comment)
+        else:
+            new_lines.append(line)
+            i += 1
+    
+    content = '\n'.join(new_lines)
+    
+    # Now add loadjsc to CreateGlobalTemplate
     old_load = """  global_template->Set(isolate, "load",
                        FunctionTemplate::New(isolate, ExecuteFile));
   global_template->Set(isolate, "setTimeout","""
@@ -222,6 +227,12 @@ void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {
 
     if old_load not in content:
         print("ERROR: CreateGlobalTemplate load pattern not found")
+        print("Looking for alternative patterns...")
+        # Try alternative - line-based for CreateGlobalTemplate
+        lines2 = content.split('\n')
+        for idx, l in enumerate(lines2):
+            if 'ExecuteFile' in l and 'load' in l:
+                print(f"  Found at line {idx}: {l.strip()}")
         return False
     content = content.replace(old_load, new_load)
 
