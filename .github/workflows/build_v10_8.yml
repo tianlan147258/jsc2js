@@ -20,17 +20,16 @@ jobs:
       - name: Setup Git
         run: git config --global core.autocrlf false
 
-      - name: Check Windows SDK
+      - name: Setup SDK symlink (10.0.20348.0 -> 10.0.22621.0)
         run: |
-          Write-Host "Available SDK versions:"
-          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $($_.Name)" }
-          # List available SDK versions in registry
-          Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue
-          Get-ChildItem "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows Kits\Installed Roots" -ErrorAction SilentlyContinue
-          
-          # Also check what vs_toolchain.py sees
-          Write-Host "`nCurrent env include: $env:include"
-          Write-Host "Current env lib: $env:lib"
+          $base = "C:\Program Files (x86)\Windows Kits\10"
+          $src = "$base\Include\10.0.22621.0"
+          $dst = "$base\Include\10.0.20348.0"
+          $srcLib = "$base\Lib\10.0.22621.0"
+          $dstLib = "$base\Lib\10.0.20348.0"
+          New-Item -ItemType Junction -Path $dst -Target $src -Force
+          New-Item -ItemType Junction -Path $dstLib -Target $srcLib -Force
+          Write-Host "Created symlinks for SDK 10.0.20348.0 -> 10.0.22621.0"
         shell: pwsh
 
       - name: Install depot_tools
@@ -58,7 +57,6 @@ jobs:
       - name: Generate build config
         run: |
           cd v8
-          export WindowsSDKVersion=10.0.22621.0
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
         shell: bash
 
