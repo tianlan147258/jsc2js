@@ -42,25 +42,14 @@ jobs:
           python3 patch_v10_8.py
         shell: bash
 
-      - name: Generate build config
+      - name: Patch vs_toolchain.py and generate build config
         run: |
           cd v8
+          # Hardcode VS path in vs_toolchain.py to bypass VS 18 detection failure
           $vspath = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Write-Host "VS: $vspath"
-          # Write minimal args.gn directly, bypass v8gen.py
-          mkdir -p out.gn/x64.release
-          @"
-          is_debug = false
-          is_clang = false
-          target_cpu = "x64"
-          v8_monolithic = true
-          v8_use_external_startup_data = false
-          is_component_build = false
-          treat_warnings_as_errors = false
-          use_lld = false
-          "@ | Out-File -Encoding ascii out.gn/x64.release/args.gn
-          # Run gn gen directly without vs_toolchain.py
-          buildtools/win/gn.exe gen out.gn/x64.release --check
+          (Get-Content build/vs_toolchain.py -Raw) -replace 'def DetectVisualStudioPath\(\):','def DetectVisualStudioPath():`n  return r"'"$vspath"'"' | Set-Content build/vs_toolchain.py
+          python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false use_lld=false
         shell: pwsh
 
       - name: Build d8
