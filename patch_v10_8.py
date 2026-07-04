@@ -218,3 +218,17 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# --- Patch vs_toolchain.py to bypass VS detection ---
+import os
+vs_path = os.environ.get("VSPATH", "")
+if vs_path:
+    with open("build/vs_toolchain.py", "r") as f:
+        content = f.read()
+    content = content.replace(
+        "def DetectVisualStudioPath():",
+        'def DetectVisualStudioPath():\n  return r"' + vs_path + '"'
+    )
+    with open("build/vs_toolchain.py", "w") as f:
+        f.write(content)
+    print(f"OK: vs_toolchain.py (VS path hardcoded to {vs_path})")
