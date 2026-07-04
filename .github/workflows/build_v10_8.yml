@@ -12,7 +12,7 @@ jobs:
     name: Build V8 10.8.168.25 d8 (Windows)
     runs-on: windows-latest
     env:
-      DEPOT_TOOLS_WIN_TOOLCHAIN: "1"
+      DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
     steps:
       - name: Checkout infra
         uses: actions/checkout@v4
@@ -44,9 +44,14 @@ jobs:
 
       - name: Generate build config
         run: |
+          # Locate VS 2022
+          $vspath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VS: $vspath"
+          $env:VSINSTALLDIR = $vspath
+          $env:GYP_MSVS_VERSION = "2022"
           cd v8
           python tools/dev/v8gen.py -vv x64.release -- v8_monolithic=true v8_use_external_startup_data=false is_component_build=false is_debug=false target_cpu="x64" treat_warnings_as_errors=false
-        shell: bash
+        shell: pwsh
 
       - name: Build d8
         run: |
