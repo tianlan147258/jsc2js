@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Apply jsc2js patches to V8 10.8.168.25 source directly."""
 
-import os
-import sys
+import os, sys
 
 V8_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "v8") if "v8" not in os.getcwd() else "."
 
@@ -19,24 +18,20 @@ def patch_code_serializer():
     path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
     content = read_file(path)
 
-    # Replace SanityCheck() body
-    old_sanity = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
+    old = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
     uint32_t expected_source_hash) const {
   SerializedCodeSanityCheckResult result = SanityCheckWithoutSource();
   if (result != SerializedCodeSanityCheckResult::kSuccess) return result;
   return SanityCheckJustSource(expected_source_hash);
 }"""
-    new_sanity = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
+    new = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(
     uint32_t expected_source_hash) const {
   return SerializedCodeSanityCheckResult::kSuccess;
 }"""
-    if old_sanity not in content:
-        print("ERROR: SanityCheck pattern not found in code-serializer.cc")
-        return False
-    content = content.replace(old_sanity, new_sanity)
+    assert old in content, "SanityCheck pattern not found"
+    content = content.replace(old, new)
 
-    # Replace SanityCheckWithoutSource() body (keep function signature, return kSuccess)
-    old_without = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
+    old2 = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
     const {
   if (this->size_ < kHeaderSize) {
     return SerializedCodeSanityCheckResult::kInvalidHeader;
@@ -66,97 +61,53 @@ def patch_code_serializer():
   }
   return SerializedCodeSanityCheckResult::kSuccess;
 }"""
-    new_without = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
+    new2 = """SerializedCodeSanityCheckResult SerializedCodeData::SanityCheckWithoutSource()
     const {
   return SerializedCodeSanityCheckResult::kSuccess;
 }"""
-    if old_without not in content:
-        print("ERROR: SanityCheckWithoutSource pattern not found")
-        return False
-    content = content.replace(old_without, new_without)
+    assert old2 in content, "SanityCheckWithoutSource pattern not found"
+    content = content.replace(old2, new2)
 
     write_file(path, content)
-    print("OK: Patched code-serializer.cc")
+    print("OK: code-serializer.cc")
     return True
 
 def patch_deserializer():
-    """2. Comment magic_number check in deserializer.cc"""
+    """2. Comment magic_number check"""
     path = os.path.join(V8_DIR, "src", "snapshot", "deserializer.cc")
     content = read_file(path)
-
-    old_check = "  CHECK_EQ(magic_number_, SerializedData::kMagicNumber);"
-    new_check = "  //CHECK_EQ(magic_number_, SerializedData::kMagicNumber);"
-
-    if old_check not in content:
-        print("ERROR: magic_number check pattern not found in deserializer.cc")
-        return False
-    content = content.replace(old_check, new_check)
-
+    old = "  CHECK_EQ(magic_number_, SerializedData::kMagicNumber);"
+    new = "  //CHECK_EQ(magic_number_, SerializedData::kMagicNumber);"
+    assert old in content, "magic_number check not found"
+    content = content.replace(old, new)
     write_file(path, content)
-    print("OK: Patched deserializer.cc")
+    print("OK: deserializer.cc")
     return True
 
 def patch_object_deserializer():
-    """3. Comment Rehash() in object-deserializer.cc"""
+    """3. Comment Rehash()"""
     path = os.path.join(V8_DIR, "src", "snapshot", "object-deserializer.cc")
     content = read_file(path)
-
-    old_rehash = "  Rehash();"
-    new_rehash = "  // Rehash();"
-    if old_rehash not in content:
-        print("ERROR: Rehash() pattern not found in object-deserializer.cc")
-        return False
-    content = content.replace(old_rehash, new_rehash)
-
+    old = "  Rehash();"
+    new = "  // Rehash();"
+    assert old in content, "Rehash() not found"
+    content = content.replace(old, new)
     write_file(path, content)
-    print("OK: Patched object-deserializer.cc")
+    print("OK: object-deserializer.cc")
     return True
 
 def patch_d8_cc():
-    """4. Add LoadJSC + Disassemble to d8.cc"""
+    """4. Add LoadJSC to d8.cc"""
     path = os.path.join(V8_DIR, "src", "d8", "d8.cc")
     content = read_file(path)
 
-    # a) Insert Disassemble + LoadJSC after RealmSharedSet (ends at line 2165)
-    old_end = """void Shell::RealmSharedSet(Local<String> property, Local<Value> value,
-                            const PropertyCallbackInfo<void>& info) {
-  Isolate* isolate = info.GetIsolate();
-  PerIsolateData* data = PerIsolateData::Get(isolate);
-  data->realm_shared_.Reset(isolate, value);
-}
+    # Insert Disassemble + LoadJSC before Realm.takeWebSnapshot
+    anchor = "// Realm.takeWebSnapshot(index, exports)"
+    assert anchor in content, "Realm.takeWebSnapshot anchor not found"
 
-// Realm.takeWebSnapshot"""
-    new_block = """void Shell::RealmSharedSet(Local<String> property, Local<Value> value,
-                            const PropertyCallbackInfo<void>& info) {
-  Isolate* isolate = info.GetIsolate();
-  PerIsolateData* data = PerIsolateData::Get(isolate);
-  data->realm_shared_.Reset(isolate, value);
-}
-
-#include "src/objects/script.h"
-#include <iostream>
+    insert_code = r'''#include "src/objects/script.h"
+#include "src/interpreter/bytecode-array-iterator.h"
 #include <unordered_set>
-
-static void Disassemble(v8::internal::Isolate* isolate,
-                        v8::internal::Tagged<v8::internal::BytecodeArray> bytecode,
-                        std::unordered_set<uintptr_t>& visited,
-                        int depth) {
-  if (depth > 100) { return; }
-  uintptr_t key = reinterpret_cast<uintptr_t>(bytecode.ptr());
-  if (visited.count(key)) { return; }
-  visited.insert(key);
-
-  auto consts = bytecode->constant_pool();
-  for (int i = 0; i < consts->length(); i++) {
-    auto obj = consts->get(i);
-    if (v8::internal::IsSharedFunctionInfo(obj)) {
-      auto shared = v8::internal::Cast<v8::internal::SharedFunctionInfo>(obj);
-      if (shared->HasBytecodeArray()) {
-        Disassemble(isolate, shared->GetBytecodeArray(isolate), visited, depth + 1);
-      }
-    }
-  }
-}
 
 void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {
   auto isolate = reinterpret_cast<v8::internal::Isolate*>(args.GetIsolate());
@@ -185,32 +136,34 @@ void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {
     v8::internal::Handle<v8::internal::SharedFunctionInfo> fun;
     if (!maybe_fun.ToHandle(&fun)) {
       args.GetIsolate()->ThrowException(v8::Exception::Error(
-          v8::String::NewFromUtf8(args.GetIsolate(), "Deserialize failed, possibly version mismatch or invalid .jsc file").ToLocalChecked()));
+          v8::String::NewFromUtf8(args.GetIsolate(), "Deserialize failed").ToLocalChecked()));
       delete[] filedata;
       return;
     }
 
-    v8::internal::PrintF("---- Starting disassembly of %s ----\n", *filename);
+    v8::internal::PrintF("---- Disassembly start ----\n");
     fflush(stdout);
 
-    std::unordered_set<uintptr_t> visited;
-    Disassemble(isolate, fun->GetBytecodeArray(isolate), visited, 0);
+    if (fun->HasBytecodeArray()) {
+      auto bytecode = fun->GetBytecodeArray(isolate);
+      v8::internal::StdoutStream os;
+      bytecode->Disassemble(os);
+    } else {
+      v8::internal::PrintF("No bytecode array found.\n");
+    }
 
-    v8::internal::PrintF("---- Finished disassembly of %s ----\n", *filename);
+    v8::internal::PrintF("---- Disassembly end ----\n");
     fflush(stdout);
 
     delete[] filedata;
   }
 }
 
-// Realm.takeWebSnapshot"""
+'''
 
-    if old_end not in content:
-        print("ERROR: RealmSharedSet end pattern not found in d8.cc")
-        return False
-    content = content.replace(old_end, new_block)
+    content = content.replace(anchor, insert_code + anchor)
 
-    # b) Add loadjsc to CreateGlobalTemplate
+    # Add loadjsc to CreateGlobalTemplate
     old_load = """  global_template->Set(isolate, "load",
                        FunctionTemplate::New(isolate, ExecuteFile));
   global_template->Set(isolate, "setTimeout","""
@@ -222,33 +175,29 @@ void v8::Shell::LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args) {
       v8::FunctionTemplate::New(isolate, v8::Shell::LoadJSC));
   global_template->Set(isolate, "setTimeout","""
 
-    if old_load not in content:
-        print("ERROR: CreateGlobalTemplate load pattern not found")
-        return False
+    assert old_load in content, "CreateGlobalTemplate load pattern not found"
     content = content.replace(old_load, new_load)
 
     write_file(path, content)
-    print("OK: Patched d8.cc")
+    print("OK: d8.cc")
     return True
 
 def patch_d8_h():
-    """5. Add LoadJSC declaration to d8.h"""
+    """5. Add LoadJSC declaration"""
     path = os.path.join(V8_DIR, "src", "d8", "d8.h")
     content = read_file(path)
 
-    old_decl = """  static void ReportException(Isolate* isolate, TryCatch* try_catch);
+    old = """  static void ReportException(Isolate* isolate, TryCatch* try_catch);
   static MaybeLocal<String> ReadFile(Isolate* isolate, const char* name,"""
-    new_decl = """  static void ReportException(Isolate* isolate, TryCatch* try_catch);
+    new = """  static void ReportException(Isolate* isolate, TryCatch* try_catch);
   static void LoadJSC(const v8::FunctionCallbackInfo<v8::Value>& args);
   static MaybeLocal<String> ReadFile(Isolate* isolate, const char* name,"""
 
-    if old_decl not in content:
-        print("ERROR: ReportException pattern not found in d8.h")
-        return False
-    content = content.replace(old_decl, new_decl)
+    assert old in content, "ReportException pattern not found"
+    content = content.replace(old, new)
 
     write_file(path, content)
-    print("OK: Patched d8.h")
+    print("OK: d8.h")
     return True
 
 def main():
