@@ -47,6 +47,14 @@ jobs:
           gclient runhooks
         shell: bash
 
+      - name: Debug d8.cc content
+        run: |
+          cd v8
+          grep -n -A 8 "void Shell::RealmSharedSet" src/d8/d8.cc
+          echo "---"
+          grep -n "Realm.takeWebSnapshot" src/d8/d8.cc
+        shell: bash
+
       - name: Apply V8 10.8 patches
         run: |
           cp patch_v10_8.py v8/
