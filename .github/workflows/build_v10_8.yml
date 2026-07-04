@@ -10,7 +10,7 @@ permissions:
 jobs:
   build:
     name: Build V8 10.8.168.25 d8 (Windows)
-    runs-on: windows-2019
+    runs-on: windows-2022
     env:
       DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
     steps:
