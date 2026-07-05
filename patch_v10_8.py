@@ -14,18 +14,41 @@ def write_file(path, content):
         f.write(content)
 
 def patch_code_serializer():
-    """1. Bypass SanityCheck at FromCachedData call site + remove .cc definitions + bypass SanityCheckWithoutSource"""
+    """1. Bypass SanityCheck in V8 10.8 - header + cc hybrid approach"""
     cc_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
+    header_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.h")
     
-    # Step 1: Remove SanityCheck (with source) from .cc (it's inline in header in V8 10.8)
+    # Step 1: Print debug info for code-serializer.h around SanityCheck/FromCachedData
+    header = read_file(header_path)
+    hlines = header.split('\n')
+    print("=== code-serializer.h debug (SanityCheck|FromCachedData) ===")
+    for i, l in enumerate(hlines):
+        if 'SanityCheck' in l or 'FromCachedData' in l or 'Deserialize' in l:
+            start = max(0, i-1)
+            end = min(len(hlines), i+3)
+            for j in range(start, end):
+                print(f"  h[{j}]: {hlines[j]}")
+            print("  ---")
+    
+    # Step 2: Print debug info for code-serializer.cc around SanityCheck/FromCachedData
     cc = read_file(cc_path)
-    lines = cc.split('\n')
+    clines = cc.split('\n')
+    print("=== code-serializer.cc debug (SanityCheck|FromCachedData|Deserialize) ===")
+    for i, l in enumerate(clines):
+        if 'SanityCheck' in l or 'FromCachedData' in l or 'Deserialize' in l:
+            start = max(0, i-1)
+            end = min(len(clines), i+3)
+            for j in range(start, end):
+                print(f"  c[{j}]: {clines[j]}")
+            print("  ---")
+    
+    # Step 3: Remove SanityCheck (with source) from .cc (it's inline in header in V8 10.8)
     new_lines = []
     skip = False
     bc = 0
     i = 0
-    while i < len(lines):
-        line = lines[i]
+    while i < len(clines):
+        line = clines[i]
         if (not skip and 
             'SerializedCodeData::SanityCheck(' in line and 
             'SanityCheckWithoutSource' not in line):
@@ -44,15 +67,15 @@ def patch_code_serializer():
     write_file(cc_path, '\n'.join(new_lines))
     print("OK: Removed SanityCheck (with source) from code-serializer.cc")
     
-    # Step 2: Bypass SanityCheckWithoutSource
+    # Step 4: Bypass SanityCheckWithoutSource
     cc = read_file(cc_path)
-    lines = cc.split('\n')
+    clines = cc.split('\n')
     new_lines = []
     in_func = False
     bc = 0
     i = 0
-    while i < len(lines):
-        line = lines[i]
+    while i < len(clines):
+        line = clines[i]
         if not in_func:
             if 'SerializedCodeData::SanityCheckWithoutSource()' in line:
                 in_func = True
@@ -73,52 +96,6 @@ def patch_code_serializer():
         i += 1
     write_file(cc_path, '\n'.join(new_lines))
     print("OK: SanityCheckWithoutSource -> always kSuccess")
-    
-    # Step 3: Bypass FromCachedData SanityCheck call
-    cc = read_file(cc_path)
-    
-    # Print surrounding context for debug
-    lines = cc.split('\n')
-    for i, l in enumerate(lines):
-        if 'FromCachedData' in l or 'rejection_result' in l or 'SanityCheck' in l:
-            start = max(0, i-2)
-            end = min(len(lines), i+5)
-            for j in range(start, end):
-                print(f"  [{j}]: {lines[j]}")
-            print("  ---")
-    
-    # Try multiple patterns
-    patched = False
-    patterns = [
-        ('*rejection_result = scd.SanityCheck(isolate, expected_source_hash);',
-         '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
-        ('*rejection_result = scd.SanityCheck(isolate, expected_source_hash)',
-         '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
-        ('rejection_result = scd.SanityCheck(isolate, expected_source_hash)',
-         'rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
-    ]
-    for old_p, new_p in patterns:
-        if old_p in cc:
-            cc = cc.replace(old_p, new_p)
-            patched = True
-            print(f"OK: Replaced '{old_p[:50]}...'")
-            break
-    
-    if not patched:
-        # Try bypassing the rejection check
-        for old_if in ['if (*rejection_result != kSuccess)', 'if (*rejection_result != CHECK_SUCCESS)', 'if (*rejection_result != CHECK_SUCCESS)']:
-            new_if = 'if (false)  // bypassed'
-            if old_if in cc:
-                cc = cc.replace(old_if, new_if)
-                patched = True
-                print(f"OK: Bypassed rejection check: {old_if}")
-                break
-    
-    if not patched:
-        print("ERROR: Cannot find FromCachedData rejection pattern to bypass")
-        return False
-    
-    write_file(cc_path, cc)
     return True
 
 def patch_deserializer():
