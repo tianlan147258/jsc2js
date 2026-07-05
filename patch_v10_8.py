@@ -14,116 +14,89 @@ def write_file(path, content):
         f.write(content)
 
 def patch_code_serializer():
-    """1. Bypass SanityCheck in V8 10.8 (inline in header) + remove .cc out-of-line definition"""
-    # Step 1: Remove SanityCheck WITH source from .cc (it's now inline in header)
+    """1. Bypass SanityCheck at FromCachedData call site + remove .cc definitions + bypass SanityCheckWithoutSource"""
     cc_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
-    cc_content = read_file(cc_path)
-    lines = cc_content.split('\n')
+    
+    # Step 1: Remove SanityCheck (with source) from .cc (it's inline in header in V8 10.8)
+    cc = read_file(cc_path)
+    lines = cc.split('\n')
     new_lines = []
-    skip_mode = False
-    brace_count = 0
+    skip = False
+    bc = 0
     i = 0
     while i < len(lines):
         line = lines[i]
-        # "SerializedCodeData::SanityCheck(" that is NOT followed by "WithoutSource"
-        if (not skip_mode and 
+        if (not skip and 
             'SerializedCodeData::SanityCheck(' in line and 
             'SanityCheckWithoutSource' not in line):
-            skip_mode = True
-            brace_count = 0
+            skip = True
+            bc = 0
             i += 1
             continue
-        if skip_mode:
-            brace_count += line.count('{') - line.count('}')
-            if brace_count <= 0 and '}' in line:
-                skip_mode = False
+        if skip:
+            bc += line.count('{') - line.count('}')
+            if bc <= 0 and '}' in line:
+                skip = False
             i += 1
             continue
         new_lines.append(line)
         i += 1
-    
     write_file(cc_path, '\n'.join(new_lines))
     print("OK: Removed SanityCheck (with source) from code-serializer.cc")
     
-    # Step 2: Bypass SanityCheckWithoutSource in .cc - always return kSuccess
-    cc_content2 = read_file(cc_path)
-    lines2 = cc_content2.split('\n')
-    new_lines2 = []
-    in_sanity_wo = False
-    brace_count2 = 0
+    # Step 2: Bypass SanityCheckWithoutSource
+    cc = read_file(cc_path)
+    lines = cc.split('\n')
+    new_lines = []
+    in_func = False
+    bc = 0
     i = 0
-    while i < len(lines2):
-        line = lines2[i]
-        if not in_sanity_wo:
+    while i < len(lines):
+        line = lines[i]
+        if not in_func:
             if 'SerializedCodeData::SanityCheckWithoutSource()' in line:
-                in_sanity_wo = True
-                brace_count2 = 0
-                new_lines2.append(line)
+                in_func = True
+                bc = 0
+                new_lines.append(line)
                 i += 1
                 continue
-            new_lines2.append(line)
+            new_lines.append(line)
         else:
-            brace_count2 += line.count('{') - line.count('}')
-            if brace_count2 <= 0 and '}' in line:
+            bc += line.count('{') - line.count('}')
+            if bc <= 0 and '}' in line:
                 indent = ' ' * (len(line) - len(line.lstrip()))
-                new_lines2.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                new_lines2.append(line)
-                in_sanity_wo = False
+                new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
+                new_lines.append(line)
+                in_func = False
             i += 1
             continue
         i += 1
+    write_file(cc_path, '\n'.join(new_lines))
+    print("OK: SanityCheckWithoutSource -> always kSuccess")
     
-    write_file(cc_path, '\n'.join(new_lines2))
-    print("OK: Patched SanityCheckWithoutSource (always returns kSuccess)")
-    
-    # Step 3: Patch the header's inline SanityCheck to always return kSuccess
-    header_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.h")
-    header = read_file(header_path)
-    hlines = header.split('\n')
-    new_hlines = []
-    in_sanity_inline = False
-    brace_count_h = 0
-    marker_found = False
-    i = 0
-    while i < len(hlines):
-        line = hlines[i]
-        if not in_sanity_inline:
-            # Match "SanityCheck(" that is part of inline method (inside class, not SerializedCodeData::)
-            if ('SanityCheck(' in line and 
-                'SanityCheckWithoutSource' not in line and
-                'SerializedCodeData::' not in line and
-                'AlignedCachedData' not in line and
-                '//' not in line.strip()[:5]):
-                in_sanity_inline = True
-                brace_count_h = 0
-                marker_found = True
-                new_hlines.append(line)
-                i += 1
-                continue
-            new_hlines.append(line)
+    # Step 3: Bypass FromCachedData SanityCheck call
+    old_from = '*rejection_result = scd.SanityCheck(isolate, expected_source_hash);'
+    new_from = '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'
+    cc = read_file(cc_path)
+    if old_from not in cc:
+        print("WARNING: Exact FromCachedData pattern not found, trying alternative...")
+        # Try alternative: just bypass the if-block that checks rejection
+        old_if = 'if (*rejection_result != CHECK_SUCCESS) {'
+        new_if = 'if (false && *rejection_result != CHECK_SUCCESS) {  // bypassed'
+        if old_if in cc:
+            cc = cc.replace(old_if, new_if)
+            print("OK: Bypassed FromCachedData rejection check")
         else:
-            brace_count_h += line.count('{') - line.count('}')
-            if brace_count_h <= 0 and '}' in line:
-                indent = ' ' * (len(line) - len(line.lstrip()))
-                new_hlines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                new_hlines.append(line)
-                in_sanity_inline = False
-            i += 1
-            continue
-        i += 1
+            print("ERROR: Cannot find FromCachedData rejection pattern")
+            for i, l in enumerate(lines):
+                if 'FromCachedData' in l or 'rejection_result' in l:
+                    print(f"  [{i}]: {l}")
+            return False
+    else:
+        cc = cc.replace(old_from, new_from)
+        print("OK: FromCachedData - SanityCheck bypassed at call site")
     
-    if not marker_found:
-        print("WARNING: Could not find inline SanityCheck in header, trying fallback...")
-        # Fallback: search with broader pattern
-        header2 = read_file(header_path)
-        # Just look for any line with "SanityCheck" in the header that's inside the class
-        # and print surrounding context for debugging
-        for i, l in enumerate(hlines):
-            if 'SanityCheck' in l or (i > 0 and 'SanityCheck' in hlines[i-1]):
-                print(f"  hdr[{i}]: {l}")
-    
-    write_file(header_path, '\n'.join(new_hlines))
-    print("OK: Patched code-serializer.h (inline SanityCheck -> kSuccess)")
+    write_file(cc_path, cc)
     return True
 
 def patch_deserializer():
