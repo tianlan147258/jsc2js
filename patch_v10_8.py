@@ -75,26 +75,48 @@ def patch_code_serializer():
     print("OK: SanityCheckWithoutSource -> always kSuccess")
     
     # Step 3: Bypass FromCachedData SanityCheck call
-    old_from = '*rejection_result = scd.SanityCheck(isolate, expected_source_hash);'
-    new_from = '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'
     cc = read_file(cc_path)
-    if old_from not in cc:
-        print("WARNING: Exact FromCachedData pattern not found, trying alternative...")
-        # Try alternative: just bypass the if-block that checks rejection
-        old_if = 'if (*rejection_result != CHECK_SUCCESS) {'
-        new_if = 'if (false && *rejection_result != CHECK_SUCCESS) {  // bypassed'
-        if old_if in cc:
-            cc = cc.replace(old_if, new_if)
-            print("OK: Bypassed FromCachedData rejection check")
-        else:
-            print("ERROR: Cannot find FromCachedData rejection pattern")
-            for i, l in enumerate(lines):
-                if 'FromCachedData' in l or 'rejection_result' in l:
-                    print(f"  [{i}]: {l}")
-            return False
-    else:
-        cc = cc.replace(old_from, new_from)
-        print("OK: FromCachedData - SanityCheck bypassed at call site")
+    
+    # Print surrounding context for debug
+    lines = cc.split('\n')
+    for i, l in enumerate(lines):
+        if 'FromCachedData' in l or 'rejection_result' in l or 'SanityCheck' in l:
+            start = max(0, i-2)
+            end = min(len(lines), i+5)
+            for j in range(start, end):
+                print(f"  [{j}]: {lines[j]}")
+            print("  ---")
+    
+    # Try multiple patterns
+    patched = False
+    patterns = [
+        ('*rejection_result = scd.SanityCheck(isolate, expected_source_hash);',
+         '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
+        ('*rejection_result = scd.SanityCheck(isolate, expected_source_hash)',
+         '*rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
+        ('rejection_result = scd.SanityCheck(isolate, expected_source_hash)',
+         'rejection_result = SerializedCodeSanityCheckResult::kSuccess;  // bypassed'),
+    ]
+    for old_p, new_p in patterns:
+        if old_p in cc:
+            cc = cc.replace(old_p, new_p)
+            patched = True
+            print(f"OK: Replaced '{old_p[:50]}...'")
+            break
+    
+    if not patched:
+        # Try bypassing the rejection check
+        for old_if in ['if (*rejection_result != kSuccess)', 'if (*rejection_result != CHECK_SUCCESS)', 'if (*rejection_result != CHECK_SUCCESS)']:
+            new_if = 'if (false)  // bypassed'
+            if old_if in cc:
+                cc = cc.replace(old_if, new_if)
+                patched = True
+                print(f"OK: Bypassed rejection check: {old_if}")
+                break
+    
+    if not patched:
+        print("ERROR: Cannot find FromCachedData rejection pattern to bypass")
+        return False
     
     write_file(cc_path, cc)
     return True
