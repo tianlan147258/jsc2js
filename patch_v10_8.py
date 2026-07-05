@@ -151,6 +151,7 @@ def patch_d8_cc():
         '#include "src/snapshot/code-serializer.h"',
         '#include "src/objects/objects-inl.h"',
         '#include "src/objects/string-inl.h"',
+        '#include "src/diagnostics/disassembler.h"',
         '#include <unordered_set>',
         '#include <sstream>',
     ]
@@ -182,7 +183,7 @@ def patch_d8_cc():
         '  }',
         '  // Print bytecode',
         '  v8::internal::OFStream os(stdout);',
-        '  bc->BytecodeArrayPrint(os);',
+        '  bc->Disassemble(os);',
         '  v8::internal::PrintF("\\n");',
         '',
         '  // Recurse into inner functions',
