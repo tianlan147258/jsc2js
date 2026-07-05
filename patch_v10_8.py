@@ -111,7 +111,9 @@ def patch_deserializer():
     content = content.replace(old_check, new_check)
     write_file(path, content)
     print("OK: Patched deserializer.cc")
-    return Truedef patch_object_deserializer():
+    return True
+
+def patch_object_deserializer():
     """3. Comment Rehash() in object-deserializer.cc"""
     path = os.path.join(V8_DIR, "src", "snapshot", "object-deserializer.cc")
     content = read_file(path)
