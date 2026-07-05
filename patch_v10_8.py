@@ -13,81 +13,52 @@ def write_file(path, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
-def patch_body_always_kSuccess(filepath, func_signature):
-    """Replace a function body with: return SerializedCodeSanityCheckResult::kSuccess;"""
-    content = read_file(filepath)
-    lines = content.split('\n')
-    new_lines = []
-    in_func = False
-    brace_count = 0
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not in_func:
-            if func_signature in line:
-                in_func = True
-                brace_count = 0
-                new_lines.append(line)
-                i += 1
-                continue
-            new_lines.append(line)
-        else:
-            brace_count += line.count('{') - line.count('}')
-            if brace_count <= 0 and '}' in line:
-                indent = ' ' * (len(line) - len(line.lstrip()))
-                new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                new_lines.append(line)
-                in_func = False
-            i += 1
-            continue
-        i += 1
-    write_file(filepath, '\n'.join(new_lines))
-
 def patch_code_serializer():
-    """1. Bypass all three SanityCheck methods in code-serializer.cc"""
+    """1. Bypass all three SanityCheck methods in code-serializer.cc using exact string replacement"""
     cc_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
+    cc = read_file(cc_path)
     
-    # Bypass SanityCheckWithoutSource -> always kSuccess
-    patch_body_always_kSuccess(cc_path, 'SerializedCodeData::SanityCheckWithoutSource()')
-    print("OK: SanityCheckWithoutSource -> kSuccess")
+    # Patch 1: SanityCheck body (known from debug: lines 655-660)
+    old_sanity_body = '''  SerializedCodeSanityCheckResult result = SanityCheckWithoutSource();
+  if (result != SerializedCodeSanityCheckResult::kSuccess) return result;
+  return SanityCheckJustSource(expected_source_hash);'''
+    new_sanity_body = '''  return SerializedCodeSanityCheckResult::kSuccess;'''
+    if old_sanity_body not in cc:
+        print("ERROR: SanityCheck body pattern not found")
+        return False
+    cc = cc.replace(old_sanity_body, new_sanity_body)
+    print("OK: SanityCheck -> kSuccess")
     
-    # Bypass SanityCheckJustSource -> always kSuccess
-    patch_body_always_kSuccess(cc_path, 'SerializedCodeData::SanityCheckJustSource(')
+    # Patch 2: SanityCheckJustSource body (known from debug: lines 664-668)
+    old_justsource_body = '''  uint32_t source_hash = GetHeaderValue(kSourceHashOffset);
+  if (source_hash != expected_source_hash) {
+    return SerializedCodeSanityCheckResult::kSourceMismatch;
+  }
+  return SerializedCodeSanityCheckResult::kSuccess;'''
+    new_justsource_body = '''  return SerializedCodeSanityCheckResult::kSuccess;'''
+    if old_justsource_body not in cc:
+        print("ERROR: SanityCheckJustSource body pattern not found")
+        return False
+    cc = cc.replace(old_justsource_body, new_justsource_body)
     print("OK: SanityCheckJustSource -> kSuccess")
     
-    # Bypass SanityCheck (the main one, calls the above two)
-    # Note: 'SanityCheckJustSource' and 'SanityCheckWithoutSource' in the signature match check
-    # We must match SerializedCodeData::SanityCheck( but not SanityCheckJustSource or SanityCheckWithoutSource
-    content = read_file(cc_path)
-    lines = content.split('\n')
-    new_lines = []
-    in_func = False
-    brace_count = 0
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        if not in_func:
-            if ('SerializedCodeData::SanityCheck(' in line and 
-                'SanityCheckJustSource' not in line and
-                'SanityCheckWithoutSource' not in line):
-                in_func = True
-                brace_count = 0
-                new_lines.append(line)
-                i += 1
-                continue
-            new_lines.append(line)
-        else:
-            brace_count += line.count('{') - line.count('}')
-            if brace_count <= 0 and '}' in line:
-                indent = ' ' * (len(line) - len(line.lstrip()))
-                new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                new_lines.append(line)
-                in_func = False
-            i += 1
-            continue
-        i += 1
-    write_file(cc_path, '\n'.join(new_lines))
-    print("OK: SanityCheck -> kSuccess")
+    # Patch 3: SanityCheckWithoutSource body - replace from first if to last return before closing brace
+    # Known from debug: lines 673-698, the body between signature and closing }
+    old_wo_start = '''    return SerializedCodeSanityCheckResult::kInvalidHeader;'''
+    old_wo_end = '''  return SerializedCodeSanityCheckResult::kSuccess;'''
+    # Find the block between these two
+    start_idx = cc.find(old_wo_start)
+    end_idx = cc.find(old_wo_end, start_idx)
+    if start_idx == -1 or end_idx == -1:
+        print("ERROR: SanityCheckWithoutSource body markers not found")
+        return False
+    # Replace from old_wo_start to (including) old_wo_end with just the return
+    before = cc[:start_idx]
+    after = cc[end_idx + len(old_wo_end):]
+    cc = before + '  return SerializedCodeSanityCheckResult::kSuccess;' + after
+    print("OK: SanityCheckWithoutSource -> kSuccess")
+    
+    write_file(cc_path, cc)
     return True
 
 def patch_deserializer():
