@@ -21,12 +21,22 @@ def replace_func_body_smart(file_content, func_sig_line, expected_body_start_lin
     """
     lines = file_content.split('\n')
     
-    # Step 1: Find the function signature
+    # Step 1: Find the function signature (with optional exclusions)
     sig_idx = -1
-    for i, line in enumerate(lines):
-        if func_sig_line in line:
-            sig_idx = i
-            break
+    if ',' in func_sig_line:
+        parts = [p.strip() for p in func_sig_line.split(',')]
+        search_str = parts[0].strip("'") if parts[0].startswith("'") else parts[0]
+        exclusions = [p.strip().strip("'") for p in parts[1:]]
+        for i, line in enumerate(lines):
+            if search_str in line and not any(excl in line for excl in exclusions):
+                sig_idx = i
+                break
+    else:
+        search_str = func_sig_line.strip("'") if func_sig_line.startswith("'") else func_sig_line
+        for i, line in enumerate(lines):
+            if search_str in line:
+                sig_idx = i
+                break
     
     if sig_idx == -1:
         print(f"ERROR: Cannot find signature: '{func_sig_line}'")
@@ -85,7 +95,7 @@ def patch_code_serializer():
     cc = read_file(cc_path)
     
     # Bypass SanityCheck (the one that calls SanityCheckWithoutSource + SanityCheckJustSource)
-    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(' and 'SanityCheckJustSource' not in line and 'SanityCheckWithoutSource' not in line)
+    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(','SanityCheckJustSource','SanityCheckWithoutSource'))
     if not ok: return False
     print("OK: SanityCheck -> kSuccess")
     
