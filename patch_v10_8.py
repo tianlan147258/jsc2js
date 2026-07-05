@@ -85,7 +85,7 @@ def patch_code_serializer():
     cc = read_file(cc_path)
     
     # Bypass SanityCheck (the one that calls SanityCheckWithoutSource + SanityCheckJustSource)
-    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(uint32_t')
+    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(' and 'SanityCheckJustSource' not in line and 'SanityCheckWithoutSource' not in line)
     if not ok: return False
     print("OK: SanityCheck -> kSuccess")
     
