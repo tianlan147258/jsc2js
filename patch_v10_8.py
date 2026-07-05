@@ -192,7 +192,7 @@ def patch_d8_cc():
         '    v8::internal::Object obj = consts.get(i);',
         '    if (obj.IsString()) {',
         '      v8::internal::String str = v8::internal::String::cast(obj);',
-        '      v8::internal::PrintF("  [C%d]: \"%s\"\n", i, str.ToCString().get());',
+        '      v8::internal::PrintF("  [C%d]: \"%s\"\\n", i, str.ToCString().get());',
         '    }',
         '    if (obj.IsSharedFunctionInfo()) {',
         '      v8::internal::SharedFunctionInfo inner_sfi = v8::internal::SharedFunctionInfo::cast(obj);',
