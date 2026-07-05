@@ -14,57 +14,53 @@ def write_file(path, content):
         f.write(content)
 
 def patch_code_serializer():
-    """1. Bypass SanityCheck in code-serializer.cc - body replacement"""
-    path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
-    content = read_file(path)
-    lines = content.split('\n')
+    """1. Bypass SanityCheck in code-serializer.h (inline in V8 10.8) + remove .cc definition"""
+    # First, patch the header - replace SanityCheck body with return kSuccess
+    header_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.h")
+    header = read_file(header_path)
+    
+    # Find inline SanityCheck method and replace its body
+    old_sanity_header = "return SanityCheckResult(source, SanityCheckWithoutSource());"
+    new_sanity_header = "return SerializedCodeSanityCheckResult::kSuccess;"
+    if old_sanity_header not in header:
+        print("ERROR: SanityCheck inline body not found in code-serializer.h")
+        return False
+    header = header.replace(old_sanity_header, new_sanity_header)
+    write_file(header_path, header)
+    print("OK: Patched code-serializer.h (SanityCheck now always returns kSuccess)")
+    
+    # Second, remove the out-of-line SanityCheck definitions from .cc file
+    cc_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
+    cc_content = read_file(cc_path)
+    lines = cc_content.split('\n')
     new_lines = []
-    in_sanity = False
-    in_sanity_without = False
+    skip_until_brace_zero = False
+    brace_count = 0
     i = 0
     while i < len(lines):
         line = lines[i]
         marker_sanity = 'SerializedCodeData::SanityCheck('
         marker_without = 'SerializedCodeData::SanityCheckWithoutSource()'
         
-        if not in_sanity and not in_sanity_without:
-            if marker_without in line:
-                in_sanity_without = True
+        if not skip_until_brace_zero:
+            if marker_without in line or (marker_sanity in line and marker_without not in line):
+                skip_until_brace_zero = True
                 brace_count = 0
-                new_lines.append(line)
                 i += 1
-                while i < len(lines) and in_sanity_without:
-                    l = lines[i]
-                    brace_count += l.count('{') - l.count('}')
-                    if brace_count <= 0 and '}' in l:
-                        indent = ' ' * (len(l) - len(l.lstrip()))
-                        new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                        new_lines.append(l)
-                        in_sanity_without = False
-                    i += 1
-            elif marker_sanity in line and marker_without not in line:
-                in_sanity = True
-                brace_count = 0
-                new_lines.append(line)
-                i += 1
-                while i < len(lines) and in_sanity:
-                    l = lines[i]
-                    brace_count += l.count('{') - l.count('}')
-                    if brace_count <= 0 and '}' in l:
-                        indent = ' ' * (len(l) - len(l.lstrip()))
-                        new_lines.append(indent + 'return SerializedCodeSanityCheckResult::kSuccess;')
-                        new_lines.append(l)
-                        in_sanity = False
-                    i += 1
-            else:
-                new_lines.append(line)
-                i += 1
-        else:
+                continue
             new_lines.append(line)
+        else:
+            brace_count += line.count('{') - line.count('}')
+            if brace_count <= 0 and '}' in line:
+                skip_until_brace_zero = False
+                # Skip the closing brace too
             i += 1
+            continue
+        
+        i += 1
     
-    write_file(path, '\n'.join(new_lines))
-    print("OK: Patched code-serializer.cc")
+    write_file(cc_path, '\n'.join(new_lines))
+    print("OK: Removed out-of-line SanityCheck from code-serializer.cc")
     return True
 
 def patch_deserializer():
