@@ -182,29 +182,19 @@ def patch_d8_cc():
         '    v8::internal::PrintF("Function: (anonymous)\\n");',
         '  }',
         '  // Print bytecode',
+        '  // Print bytecode',
         '  v8::internal::OFStream os(stdout);',
-        '  bc->Disassemble(os);
-  // Print constant pool strings
-  v8::internal::FixedArray consts = bc->constant_pool();
-  if (consts.length() > 0) {
-    for (int i = 0; i < consts.length(); i++) {
-      v8::internal::Object obj = consts.get(i);
-      if (obj.IsString()) {
-        v8::internal::String str = v8::internal::String::cast(obj);
-        v8::internal::PrintF("  [C%d]: \"", i);
-        str.PrintUC16(stdout, 0, str.length());
-        v8::internal::PrintF("\"\n");
-      } else if (obj.IsNumber()) {
-        v8::internal::PrintF("  [C%d]: %g\n", i, obj.Number());
-      }
-    }
-  }',
-        '  v8::internal::PrintF("\\n");',
+        '  bc->Disassemble(os);',
+        '  v8::internal::PrintF("\n");',
         '',
-        '  // Recurse into inner functions',
+        '  // Dump constants && recurse into inner functions',
         '  v8::internal::FixedArray consts = bc->constant_pool();',
         '  for (int i = 0; i < consts.length(); i++) {',
         '    v8::internal::Object obj = consts.get(i);',
+        '    if (obj.IsString()) {',
+        '      v8::internal::Handle<v8::internal::String> str = v8::internal::handle(v8::internal::Cast<v8::internal::String>(obj), isolate);',
+        '      v8::internal::PrintF("  [C%d]: \"%s\"\n", i, str->ToCString().get());',
+        '    }',
         '    if (obj.IsSharedFunctionInfo()) {',
         '      v8::internal::SharedFunctionInfo inner_sfi = v8::internal::SharedFunctionInfo::cast(obj);',
         '      if (inner_sfi.HasBytecodeArray()) {',
@@ -212,6 +202,8 @@ def patch_d8_cc():
         '        DisassembleBytecode(isolate, inner_handle, visited, depth + 1);',
         '      }',
         '    }',
+        '  }',
+        '}',
         '  }',
         '}',
         '',
