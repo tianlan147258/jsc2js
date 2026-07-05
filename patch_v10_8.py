@@ -110,36 +110,8 @@ def patch_deserializer():
         return False
     content = content.replace(old_check, new_check)
     write_file(path, content)
-    
-    # Also add ReadOnlyHeapRef fallback for version mismatch
-    lines = content.split("\n")
-    # Find "ReadOnlySpace* read_only_space" to insert fallback after
-    insert_at = -1
-    for i, line in enumerate(lines):
-        if "ReadOnlySpace* read_only_space = isolate()->heap()->read_only_space();" in line:
-            insert_at = i + 1
-            break
-    
-    if insert_at > 0:
-        fallback_code = [
-            "  if (deserializing_user_code() &&",
-            "      chunk_index >= read_only_space->pages().size()) {",
-            "    HeapObject fallback = ReadOnlyRoots(isolate()).undefined_value();",
-            "    return slot_accessor.Write(fallback, GetAndResetNextReferenceType());",
-            "  }",
-            "",
-        ]
-        for fc in reversed(fallback_code):
-            lines.insert(insert_at, fc)
-        write_file(path, "\n".join(lines))
-        print("OK: Added ReadOnlyHeapRef fallback")
-    else:
-        print("WARNING: ReadOnlySpace pattern not found, fallback not added")
-    
     print("OK: Patched deserializer.cc")
-    return True
-
-def patch_object_deserializer():
+    return Truedef patch_object_deserializer():
     """3. Comment Rehash() in object-deserializer.cc"""
     path = os.path.join(V8_DIR, "src", "snapshot", "object-deserializer.cc")
     content = read_file(path)
