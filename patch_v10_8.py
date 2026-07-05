@@ -13,33 +13,25 @@ def write_file(path, content):
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
-def replace_func_body_smart(file_content, func_sig_line, expected_body_start_line=None):
+def replace_func_body_smart(file_content, search_str, exclude_strs=None):
     """Replace a function body (between opening { and matching }) with 'return kSuccess'.
     
-    Returns (modified_content, True/False).
-    func_sig_line: The line containing the function signature (e.g. 'SerializedCodeSanityCheckResult SerializedCodeData::SanityCheck(')
+    search_str: substring that appears in the function signature line
+    exclude_strs: list of substrings that must NOT appear in the matched line
     """
     lines = file_content.split('\n')
     
-    # Step 1: Find the function signature (with optional exclusions)
+    # Step 1: Find the function signature
     sig_idx = -1
-    if ',' in func_sig_line:
-        parts = [p.strip() for p in func_sig_line.split(',')]
-        search_str = parts[0].strip("'") if parts[0].startswith("'") else parts[0]
-        exclusions = [p.strip().strip("'") for p in parts[1:]]
-        for i, line in enumerate(lines):
-            if search_str in line and not any(excl in line for excl in exclusions):
-                sig_idx = i
-                break
-    else:
-        search_str = func_sig_line.strip("'") if func_sig_line.startswith("'") else func_sig_line
-        for i, line in enumerate(lines):
-            if search_str in line:
-                sig_idx = i
-                break
+    for i, line in enumerate(lines):
+        if search_str in line:
+            if exclude_strs and any(excl in line for excl in exclude_strs):
+                continue
+            sig_idx = i
+            break
     
     if sig_idx == -1:
-        print(f"ERROR: Cannot find signature: '{func_sig_line}'")
+        print(f"ERROR: Cannot find signature: '{search_str}'")
         return file_content, False
     
     # Step 2: Find the opening brace {. It could be on the same line or a continuation line.
@@ -50,11 +42,10 @@ def replace_func_body_smart(file_content, func_sig_line, expected_body_start_lin
             break
     
     if brace_line_idx == -1:
-        print(f"ERROR: Cannot find opening brace for '{func_sig_line}'")
+        print(f"ERROR: Cannot find opening brace for '{search_str}'")
         return file_content, False
     
     # Step 3: Count braces from the opening brace line to find the matching closing brace
-    # We start counting from the position of the first { in the opening brace line
     indent = lines[brace_line_idx][:len(lines[brace_line_idx]) - len(lines[brace_line_idx].lstrip())]
     brace_count = 0
     close_brace_idx = -1
@@ -66,25 +57,20 @@ def replace_func_body_smart(file_content, func_sig_line, expected_body_start_lin
             break
     
     if close_brace_idx == -1:
-        print(f"ERROR: Cannot find closing brace for '{func_sig_line}'")
+        print(f"ERROR: Cannot find closing brace for '{search_str}'")
         return file_content, False
     
     # Step 4: Reconstruct the file, replacing body lines with 'return kSuccess'
     new_lines = []
     for i in range(len(lines)):
         if i == brace_line_idx:
-            # Opening brace line - keep as-is
             new_lines.append(lines[i])
         elif brace_line_idx < i < close_brace_idx:
-            # Body lines - skip
             if i == brace_line_idx + 1:
-                # Add the return statement after the opening brace
                 new_lines.append(indent + '  return SerializedCodeSanityCheckResult::kSuccess;')
         elif i == close_brace_idx:
-            # Closing brace - keep as-is
             new_lines.append(lines[i])
         else:
-            # Lines outside the function - keep as-is
             new_lines.append(lines[i])
     
     return '\n'.join(new_lines), True
@@ -94,8 +80,9 @@ def patch_code_serializer():
     cc_path = os.path.join(V8_DIR, "src", "snapshot", "code-serializer.cc")
     cc = read_file(cc_path)
     
-    # Bypass SanityCheck (the one that calls SanityCheckWithoutSource + SanityCheckJustSource)
-    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(','SanityCheckJustSource','SanityCheckWithoutSource'))
+    # Bypass SanityCheck - must NOT match SanityCheckJustSource or SanityCheckWithoutSource
+    cc, ok = replace_func_body_smart(cc, 'SerializedCodeData::SanityCheck(', 
+                                     exclude_strs=['SanityCheckJustSource', 'SanityCheckWithoutSource'])
     if not ok: return False
     print("OK: SanityCheck -> kSuccess")
     
