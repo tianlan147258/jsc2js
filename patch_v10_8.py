@@ -124,9 +124,8 @@ def patch_deserializer():
         fallback_code = [
             "  if (deserializing_user_code() &&",
             "      chunk_index >= read_only_space->pages().size()) {",
-            "    Tagged<HeapObject> fallback = ReadOnlyRoots(isolate()).undefined_value();",
-            "    return WriteHeapPointer(slot_accessor, fallback,",
-            "                            GetAndResetNextReferenceDescriptor());",
+            "    HeapObject fallback = ReadOnlyRoots(isolate()).undefined_value();",
+            "    return slot_accessor.Write(fallback, GetAndResetNextReferenceType());",
             "  }",
             "",
         ]
