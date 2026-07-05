@@ -183,7 +183,22 @@ def patch_d8_cc():
         '  }',
         '  // Print bytecode',
         '  v8::internal::OFStream os(stdout);',
-        '  bc->Disassemble(os);',
+        '  bc->Disassemble(os);
+  // Print constant pool strings
+  v8::internal::FixedArray consts = bc->constant_pool();
+  if (consts.length() > 0) {
+    for (int i = 0; i < consts.length(); i++) {
+      v8::internal::Object obj = consts.get(i);
+      if (obj.IsString()) {
+        v8::internal::String str = v8::internal::String::cast(obj);
+        v8::internal::PrintF("  [C%d]: \"", i);
+        str.PrintUC16(stdout, 0, str.length());
+        v8::internal::PrintF("\"\n");
+      } else if (obj.IsNumber()) {
+        v8::internal::PrintF("  [C%d]: %g\n", i, obj.Number());
+      }
+    }
+  }',
         '  v8::internal::PrintF("\\n");',
         '',
         '  // Recurse into inner functions',
