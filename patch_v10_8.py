@@ -235,7 +235,6 @@ def patch_d8_cc():
         '    fflush(stdout);',
         '',
         '    std::unordered_set<uintptr_t> visited;',
-    // (removed redundant bc handle - now created in DisassembleBytecode)
         '    DisassembleBytecode(isolate, fun, visited, 0);',
         '',
         '    v8::internal::PrintF("---- Finished disassembly of %s ----\\n", *filename);',
